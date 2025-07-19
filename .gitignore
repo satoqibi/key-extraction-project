@@ -2,3 +2,4 @@ key_logs/
 pcaps/
 session_logs/
 crypto/
+.DS_Store
