@@ -8,7 +8,7 @@ import string
 SSH_PKT_FIELD = 'SSH Version 2 (encryption:chacha20-poly1305@openssh.com mac:<implicit> compression:none)'
 S2C = 'S->C'
 C2S = 'C->S'
-LOG_FILE = '/home/kali/key_extraction_project/session_logs/decrypted_msgs.log'
+LOG_FILE = '/home/kali/key-extraction-project/session_logs/decrypted_msgs.log'
 
 f = open(LOG_FILE, 'w', encoding='utf-8', errors='replace')
 
