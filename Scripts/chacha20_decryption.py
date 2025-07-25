@@ -6,15 +6,34 @@ import struct
 import string
 
 SSH_PKT_FIELD = 'SSH Version 2 (encryption:chacha20-poly1305@openssh.com mac:<implicit> compression:none)'
-S2C = 'S->C'
-C2S = 'C->S'
-LOG_FILE = '/home/kali/key-extraction-project/session_logs/decrypted_msgs.log'
-
+LEN_FIELD = 'ssh.packet_length_encrypted_raw'
+PAYLOAD_FIELD = 'ssh.encrypted_packet_raw'
+MAC_FIELD = 'ssh.mac_raw'
+DIRECTION_FIELD = 'ssh.direction'
+s2c_seqnr = c2s_seqnr = 3
+directions = {0: 'C->S', 1: 'S->C'}
+LOG_FILE = '/path/to/your/logfile.log'
 f = open(LOG_FILE, 'w', encoding='utf-8', errors='replace')
 
-def decrypt(seqnr, k1, k2, payload):
-    i = seqnr
+def set_keys(s2c_str, c2s_str):
+    s2c = binascii.unhexlify(s2c_str)
+    c2s = binascii.unhexlify(c2s_str)
+    return s2c[:32], s2c[32:], c2s[:32], c2s[32:]
 
+def print_decrypted_msg(plaintext):
+    printable_chars = string.printable.encode()
+    readable = bytes(b if b in printable_chars else ord('.') for b in plaintext).decode('ascii', errors='replace')
+    print(f'\nDecrypted payload:\n{plaintext}\n', file=f)
+    print(f'Readable output:\n{readable}\n', file=f)
+
+def decrypt(seqnr, k1, k2, payload):
+    '''
+    returns (output_code, next_seqnr, plaintext)
+    output_code = { -1: failed decryption,
+                     0: successful decryption }
+    '''
+
+    i = seqnr
     while (i - seqnr < 10):
         nonce = int(i).to_bytes(8, 'big')
         cipher_length = ChaCha20.new(key=k1, nonce=nonce)
@@ -27,7 +46,7 @@ def decrypt(seqnr, k1, k2, payload):
         i += 1
     else:
         print(f'Wrong seqnr or key. Calc len = {payload_len}', file=f)
-        return
+        return -1, seqnr, ''
 
     print(f'seqnr = {i} | Calc len = {payload_len}', file=f)
 
@@ -41,69 +60,54 @@ def decrypt(seqnr, k1, k2, payload):
     payload_cipher = ChaCha20.new(key=k2, nonce=nonce)
     payload_cipher.seek(64)
     plaintext = payload_cipher.decrypt(ciphertext)
-    print(f'\nDecrypted payload:\n{plaintext}\n', file=f)
-    printable_chars = string.printable.encode()
-    readable = bytes(b if b in printable_chars else ord('.') for b in plaintext)
-    print(f'Readable output:\n{readable.decode('ascii', errors='replace')}\n', file=f)
-    return i + 1
+    return 0, i + 1, plaintext
 
+pcap_path = '/path/to/your/ssh.pcap'
+cap = pyshark.FileCapture(pcap_path, display_filter='ssh', use_json=True, include_raw=True)
 
-full_s2c_key = binascii.unhexlify(input('Enter S->C key: ').strip())
-full_c2s_key = binascii.unhexlify(input('Enter C->S key: ').strip())
-pcap_path = input('Enter PCAP file path: ').strip()
-s2c_seqnr = 3
-c2s_seqnr = 3
+handshake = 4
+rekey = False
 
-try:
-    cap = pyshark.FileCapture(pcap_path, display_filter='ssh', use_json=True, include_raw=True)
-except FileNotFoundError:
-    print(f'File not found: {pcap_path}')
-    sys.exit(1)
+# Replace with actual hex strings
+s2c_str = ['pre-rekey-s2c', 'post-rekey-s2c']
+c2s_str = ['pre-rekey-c2s', 'post-rekey-c2s']
 
-frame_count = 0
-total_frames = len(list(cap))
-directions = {0: C2S, 1: S2C}
+s2c_k2, s2c_k1, c2s_k2, c2s_k1 = set_keys(s2c_str[0], c2s_str[0])
+print('*' * 60, end = '\n', file=f)
 
-# skip SSH handshake msgs
-while frame_count < total_frames:
-    ssh_layer = cap[frame_count].ssh._all_fields
-    if SSH_PKT_FIELD in ssh_layer:
-        break
-    frame_count += 1
+for frame in cap:
+    ssh = frame.ssh._all_fields
+    if not SSH_PKT_FIELD in ssh: continue
+    if type(ssh[SSH_PKT_FIELD]) == list:
+        pkt = ssh[SSH_PKT_FIELD][1]
+    else:
+        if not LEN_FIELD in ssh[SSH_PKT_FIELD]: continue
+        pkt = ssh[SSH_PKT_FIELD]
 
-frame = cap[frame_count]
-ssh_layer = frame.ssh._all_fields
-direction = int(ssh_layer['ssh.direction'])
-pkt = ssh_layer[SSH_PKT_FIELD][1] # 1st s2c enc pkt
-print('*' * 60, file=f)
-print(f'Frame: {frame.frame_info.number}', file=f)
-print(directions[direction], file=f)
-print(f'{frame.ip.src}->{frame.ip.dst}', file=f)
-payload = binascii.unhexlify(pkt['ssh.packet_length_encrypted_raw'][0] + pkt['ssh.encrypted_packet_raw'][0] + pkt['ssh.mac_raw'][0])
-s2c_seqnr = decrypt(s2c_seqnr, full_s2c_key[32:], full_s2c_key[:32], payload)
-print('*' * 60, end='\n\n', file=f)
-frame_count += 1
-
-# skip newkeys msg between 1st s2c enc and 1st c2s enc msgs
-while frame_count < total_frames:
-    if 'ssh.packet_length_encrypted_raw' in cap[frame_count].ssh._all_fields[SSH_PKT_FIELD]:
-        break
-    frame_count += 1
-
-while frame_count < total_frames:
-    frame = cap[frame_count]
-    ssh_layer = frame.ssh._all_fields
-    direction = int(ssh_layer['ssh.direction'])
-    pkt = ssh_layer[SSH_PKT_FIELD]
+    direction = int(ssh[DIRECTION_FIELD])
     print(f'Frame: {frame.frame_info.number}', file=f)
     print(directions[direction], file=f)
     print(f'{frame.ip.src}->{frame.ip.dst}', file=f)
-    payload = binascii.unhexlify(pkt['ssh.packet_length_encrypted_raw'][0] + pkt['ssh.encrypted_packet_raw'][0] + pkt['ssh.mac_raw'][0])
+    payload = binascii.unhexlify(pkt[LEN_FIELD][0] + pkt[PAYLOAD_FIELD][0] + pkt[MAC_FIELD][0])
+    plaintext = ''
+
     if direction:
-        s2c_seqnr = decrypt(s2c_seqnr, full_s2c_key[32:], full_s2c_key[:32], payload)
+        code, s2c_seqnr, plaintext = decrypt(s2c_seqnr, s2c_k1, s2c_k2, payload)
+        if code == -1: break
     else:
-        c2s_seqnr = decrypt(c2s_seqnr, full_c2s_key[32:], full_c2s_key[:32], payload)
-    print('*' * 60, end='\n\n', file=f)
-    frame_count += 1
+        code, c2s_seqnr, plaintext = decrypt(c2s_seqnr, c2s_k1, c2s_k2, payload)
+        if code == -1: break
+
+    print_decrypted_msg(plaintext)
+    if len(plaintext) > 900 and b'mlkem' in plaintext:
+        rekey = True
+    if rekey:
+        if handshake > 1: handshake -= 1
+        else:
+            s2c_k2, s2c_k1, c2s_k2, c2s_k1 = set_keys(s2c_str[1], c2s_str[1])
+            handshake = 4
+            rekey = False
+
+    print('*' * 60, end = '\n', file=f)    
 
 f.close()
