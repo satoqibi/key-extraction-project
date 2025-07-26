@@ -1,0 +1,153 @@
+BEGIN {
+    @SSH_OFFSET_REMOTE_IP = 0x10;
+    @SSH_OFFSET_REMOTE_PORT = 0x18;
+    @SSH_OFFSET_KEX = 0x8;
+    @SSH_OFFSET_STATE = 0x0;
+    @KEX_OFFSET_NEWKEYS0 = 0x0;  // c2s
+    @KEX_OFFSET_NEWKEYS1 = 0x8;  // s2c
+    @ENC_OFFSET_NAME = 0x0;
+    @ENC_OFFSET_KEY = 0x20;
+    @ENC_OFFSET_KEY_LEN = 0x14;
+    @MAX_KEY_DISPLAY = 64;
+}
+
+uprobe:/usr/lib/openssh/sshd-auth:kex_derive_keys {
+    @ssh_auth_ptr[pid] = arg0;
+}
+
+uretprobe:/usr/lib/openssh/sshd-auth:kex_derive_keys {
+    $ssh = @ssh_auth_ptr[pid];
+    $remote_ip = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_REMOTE_IP);
+    $remote_port = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_REMOTE_PORT);
+    $kex = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_KEX);
+    $state = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_STATE);
+    // printf("PID: %d\nPPID: %d\n", pid, curtask->parent->pid);
+    printf("New Client IP: %s | Port: %d\n", str($remote_ip), $remote_port);
+
+    if ($kex) {
+        $newkeys0 = *(uint64*) ($kex + (uint64) @KEX_OFFSET_NEWKEYS0); // c2s
+        $newkeys1 = *(uint64*) ($kex + (uint64) @KEX_OFFSET_NEWKEYS1); // s2c
+
+        // C -> S
+        if ($newkeys0) {
+            $enc = $newkeys0;
+            if ($enc) {
+                $name = *(uint64*) ($enc + (uint64) @ENC_OFFSET_NAME);
+                $key = *(uint64*) ($enc + (uint64) @ENC_OFFSET_KEY);
+                $key_len = *(uint32*) ($enc + (uint64) @ENC_OFFSET_KEY_LEN);
+
+                printf("C->S:\n");
+                printf("Cipher name: %s\n", str($name));
+                printf("Key (%d bytes): ", $key_len);
+
+                $i = 0;
+                while ($i < 64) {
+                    printf("%02x", *(uint8*) ($key + (uint64) $i));
+                    ++$i;
+                }
+                printf("\n");
+            }
+        }
+
+        // S -> C
+        if ($newkeys1) {
+            $enc = $newkeys1;
+            if ($enc) {
+                $name = *(uint64*) ($enc + (uint64) @ENC_OFFSET_NAME);
+                $key = *(uint64*) ($enc + (uint64) @ENC_OFFSET_KEY);
+                $key_len = *(uint32*) ($enc + (uint64) @ENC_OFFSET_KEY_LEN);
+
+                printf("S->C:\n");
+                printf("Cipher name: %s\n", str($name));
+                printf("Key (%d bytes): ", $key_len);
+
+                $i = 0;
+                while ($i < 64) {
+                    printf("%02x", *(uint8*) ($key + (uint64) $i));
+                    ++$i;
+                }
+                printf("\n");
+            }
+        }
+    }
+    printf("\n");
+    delete(@ssh_auth_ptr[pid]);
+    // exit();
+}
+
+uprobe:/usr/lib/openssh/sshd-session:kex_derive_keys {
+    @ssh_session_ptr[pid] = arg0;
+}
+
+uretprobe:/usr/lib/openssh/sshd-session:kex_derive_keys {
+    $ssh = @ssh_session_ptr[pid];
+    $remote_ip = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_REMOTE_IP);
+    $remote_port = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_REMOTE_PORT);
+    $kex = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_KEX);
+    $state = *(uint64*) ($ssh + (uint64) @SSH_OFFSET_STATE);
+    // printf("PID: %d\nPPID: %d\n", pid, curtask->parent->pid);
+    printf("Rekey Client IP: %s | Port: %d\n", str($remote_ip), $remote_port);
+
+    if ($kex) {
+        $newkeys0 = *(uint64*) ($kex + (uint64) @KEX_OFFSET_NEWKEYS0); // c2s
+        $newkeys1 = *(uint64*) ($kex + (uint64) @KEX_OFFSET_NEWKEYS1); // s2c
+
+        // C -> S
+        if ($newkeys0) {
+            $enc = $newkeys0;
+            if ($enc) {
+                $name = *(uint64*) ($enc + (uint64) @ENC_OFFSET_NAME);
+                $key = *(uint64*) ($enc + (uint64) @ENC_OFFSET_KEY);
+                $key_len = *(uint32*) ($enc + (uint64) @ENC_OFFSET_KEY_LEN);
+
+                printf("C->S:\n");
+                printf("Cipher name: %s\n", str($name));
+                printf("Key (%d bytes): ", $key_len);
+
+                $i = 0;
+                while ($i < 64) {
+                    printf("%02x", *(uint8*) ($key + (uint64) $i));
+                    ++$i;
+                }
+                printf("\n");
+            }
+        }
+
+        // S -> C
+        if ($newkeys1) {
+            $enc = $newkeys1;
+            if ($enc) {
+                $name = *(uint64*) ($enc + (uint64) @ENC_OFFSET_NAME);
+                $key = *(uint64*) ($enc + (uint64) @ENC_OFFSET_KEY);
+                $key_len = *(uint32*) ($enc + (uint64) @ENC_OFFSET_KEY_LEN);
+
+                printf("S->C:\n");
+                printf("Cipher name: %s\n", str($name));
+                printf("Key (%d bytes): ", $key_len);
+
+                $i = 0;
+                while ($i < 64) {
+                    printf("%02x", *(uint8*) ($key + (uint64) $i));
+                    ++$i;
+                }
+                printf("\n");
+            }
+        }
+    }
+    printf("\n");
+    delete(@ssh_session_ptr[pid]);
+    // exit();
+}
+
+END {
+    clear(@SSH_OFFSET_REMOTE_IP);
+    clear(@SSH_OFFSET_REMOTE_PORT);
+    clear(@SSH_OFFSET_KEX);
+    clear(@SSH_OFFSET_STATE);
+    clear(@KEX_OFFSET_NEWKEYS0);
+    clear(@KEX_OFFSET_NEWKEYS1);
+    clear(@ENC_OFFSET_NAME);
+    clear(@ENC_OFFSET_KEY);
+    clear(@ENC_OFFSET_KEY_LEN);
+    clear(@MAX_KEY_DISPLAY);
+}
