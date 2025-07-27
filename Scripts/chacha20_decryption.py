@@ -57,19 +57,19 @@ if __name__ == '__main__':
     MAC_FIELD = 'ssh.mac_raw'
     DIRECTION_FIELD = 'ssh.direction'
     directions = {0: 'C->S', 1: 'S->C'}
-    LOG_FILE = '/home/kali/key-extraction-project/session_logs/decrypted_msgs.log'
+    LOG_FILE = '/path/to/log/file.log'
 
     f = open(LOG_FILE, 'w', encoding='utf-8', errors='replace')
-    pcap_path = '/home/kali/key-extraction-project/pcaps/live.pcapng'
+    pcap_path = '/path/to/pcap.pcapng'
     cap = FileCapture(pcap_path, display_filter='ssh', use_json=True, include_raw=True)
 
     handshake = 4
     rekey = False
     s2c_seqnr = c2s_seqnr = 3
 
-    s2c_str = ['41fc6669f6e52000e53f77e26fb9d6aa45111a1a4853a581dc45be759b56533ff00db98a5163bd4cf6067864c4a415d43e21ad0af60954f39f8b0acbb48ad12d', 'f377515a35e8adb8cef863ba95b4616bce7058b6197f0dea1c5d89cce347d9a2be6704159b637d97fda6d6befcebd2c2888cd768c2830be6d2177afc9a1a5dac']
-
-    c2s_str = ['c095b4f9dd99fcfdb5b625af9e94df9c93a0a524f6f50518cb4953c239eefba15e99805a28a10db70667e07da43b47a038c3feeb283e6d9a1786e3a39d4e3cc3', 'f6e878493d0c6d2d86a5c40e937c1a9ef7956c12ca9a8eb04a0f31049470ce0bfbc008b2442dfc2f872b8d1f641e6c310243afa4e32b31a6129ca8737f8c37bd']
+    # Replace these with actual hex strings from the SSH session
+    s2c_str = ['hex-str', 'hex-str']
+    c2s_str = ['hex-str', 'hex-str']
 
     s2c_k2, s2c_k1, c2s_k2, c2s_k1 = set_keys(s2c_str[0], c2s_str[0])
     print('*' * 60, end = '\n', file=f)
