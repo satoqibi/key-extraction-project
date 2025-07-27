@@ -66,6 +66,7 @@ if __name__ == '__main__':
     handshake = 4
     rekey = False
     s2c_seqnr = c2s_seqnr = 3
+
     # Replace these with actual hex strings from the SSH session
     s2c_str = ['hex-str', 'hex-str']
     c2s_str = ['hex-str', 'hex-str']

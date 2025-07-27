@@ -10,9 +10,9 @@ import json
 from pyshark.packet.packet import Packet
 from pyshark.capture.live_capture import LiveCapture
 
-PCAP_PATH = '/path/to/pcap.pcapng'
-KEX_MONITOR_PATH = '/path/to/bpftrace/script.bt'
-LOG_FILE = '/path/to/log/file.log'
+PCAP_PATH = '/home/kali/key-extraction-project/pcaps/live2.pcapng'
+KEX_MONITOR_PATH = '/home/kali/key-extraction-project/Scripts/kex_monitor.bt'
+LOG_FILE = '/home/kali/key-extraction-project/session_logs/live2.log'
 SSH_PKT_FIELD = 'SSH Version 2 (encryption:chacha20-poly1305@openssh.com mac:<implicit> compression:none)'
 LEN_FIELD = 'ssh.packet_length_encrypted_raw'
 PAYLOAD_FIELD = 'ssh.encrypted_packet_raw'
