@@ -1,8 +1,6 @@
-from Crypto.Cipher import ChaCha20
-from Crypto.Hash import Poly1305
-import binascii
-import struct
 import string
+import binascii
+from chacha20_decryption import decrypt
 import asyncio
 import aiofiles
 import threading
@@ -12,9 +10,9 @@ import json
 from pyshark.packet.packet import Packet
 from pyshark.capture.live_capture import LiveCapture
 
-PCAP_PATH = '/path/to/pcap.pcapng'
-KEX_MONITOR_PATH = '/path/to/bpftrace/script.bt'
-LOG_FILE = '/path/to/log/file.log'
+PCAP_PATH = '/home/kali/key-extraction-project/pcaps/live2.pcapng'
+KEX_MONITOR_PATH = '/home/kali/key-extraction-project/Scripts/kex_monitor.bt'
+LOG_FILE = '/home/kali/key-extraction-project/session_logs/live2.log'
 SSH_PKT_FIELD = 'SSH Version 2 (encryption:chacha20-poly1305@openssh.com mac:<implicit> compression:none)'
 LEN_FIELD = 'ssh.packet_length_encrypted_raw'
 PAYLOAD_FIELD = 'ssh.encrypted_packet_raw'
@@ -29,34 +27,6 @@ packet_queue: queue.Queue = queue.Queue()
 # Global references to the capture process and its thread
 capture: Optional[LiveCapture] = None
 capture_thread: Optional[threading.Thread] = None
-
-def decrypt(seqnr, k1, k2, payload):
-    '''
-    returns (output_code, next_seqnr, plaintext, calc_len, is_mac_valid)
-    output_code = { -1: failed decryption,
-                      0: successful decryption }
-    '''
-    i = seqnr
-    while (i - seqnr < 10):
-        nonce = int(i).to_bytes(8, 'big')
-        cipher_length = ChaCha20.new(key=k1, nonce=nonce)
-        enc_length = payload[:4]
-        dec_length = cipher_length.decrypt(enc_length)
-        payload_len = struct.unpack('>I', dec_length)[0]
-        if (payload_len + 20 <= len(payload) and payload_len <= 35000):
-            break
-        i += 1
-    else:
-        return -1, seqnr, b'', payload_len, False
-
-    mac = Poly1305.new(key=k2, nonce=nonce, cipher=ChaCha20, data=payload[:-16])
-    is_mac_valid = (binascii.unhexlify(mac.hexdigest()) == payload[-16:])
-
-    ciphertext = payload[4:4+payload_len]
-    payload_cipher = ChaCha20.new(key=k2, nonce=nonce)
-    payload_cipher.seek(64)
-    plaintext = payload_cipher.decrypt(ciphertext)
-    return 0, i + 1, plaintext, payload_len, is_mac_valid
 
 def capture_packets(interface: str) -> None:
     global PCAP_PATH, capture
