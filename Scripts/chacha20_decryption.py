@@ -78,7 +78,7 @@ print('*' * 60, end = '\n', file=f)
 for frame in cap:
     ssh = frame.ssh._all_fields
     if not SSH_PKT_FIELD in ssh: continue
-    if type(ssh[SSH_PKT_FIELD]) == list:
+    if isinstance(ssh[SSH_PKT_FIELD], list):
         pkt = ssh[SSH_PKT_FIELD][1]
     else:
         if not LEN_FIELD in ssh[SSH_PKT_FIELD]: continue
