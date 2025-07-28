@@ -5,157 +5,148 @@ import threading
 import queue
 import os
 import signal
+import time
+import sys
 
-# The name of your main listener script
-LISTENER_SCRIPT_PATH = "listener.py"
+# --- CONFIGURATION ---
+# The listener script to run
+LISTENER_SCRIPT_NAME = "listener.py"
+# The log file that the listener script writes to
+LOG_FILE_TO_MONITOR = "/tmp/file.log"
+# ---------------------
 
-class SshDecryptorGui(tk.Tk):
+class SimpleLogViewer(tk.Tk):
     """
-    A Tkinter GUI to start, stop, and monitor the output of the SSH decryption script.
+    A simple GUI to start a script and tail its log file.
     """
     def __init__(self):
         super().__init__()
-        self.title("SSH Session Decryptor")
-        self.geometry("850x650")
+        self.title("SSH Decryptor Log Viewer")
+        self.geometry("800x600")
 
         self.process = None
-        self.monitor_thread = None
         self.log_queue = queue.Queue()
+        self.stop_event = threading.Event()
+        self.monitor_thread = None
 
         self.create_widgets()
-        # Ensure graceful shutdown on window close
+        self.periodic_log_check()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def create_widgets(self):
-        """Creates and arranges the GUI widgets."""
-        # --- Main frame ---
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill="both", expand=True)
 
-        # --- Control section ---
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(side="top", fill="x", pady=(0, 10))
+        # --- Controls ---
+        controls_frame = ttk.Frame(main_frame)
+        controls_frame.pack(fill="x", pady=5)
+        self.start_button = ttk.Button(controls_frame, text="▶ Start & View Logs", command=self.start_monitoring)
+        self.start_button.pack(side="left", padx=(0, 10))
+        self.stop_button = ttk.Button(controls_frame, text="■ Stop Listener", command=self.stop_monitoring, state="disabled")
+        self.stop_button.pack(side="left")
 
-        self.start_button = ttk.Button(control_frame, text="▶ Start Monitoring", command=self.start_monitoring)
-        self.start_button.pack(side="left", padx=(0, 5))
+        # --- Log Viewer ---
+        log_frame = ttk.LabelFrame(main_frame, text=f"Monitoring: {LOG_FILE_TO_MONITOR}", padding="10")
+        log_frame.pack(fill="both", expand=True)
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, bg="black", fg="lightgreen", insertbackground="white")
+        self.log_text.pack(fill="both", expand=True)
 
-        self.stop_button = ttk.Button(control_frame, text="■ Stop Monitoring", command=self.stop_monitoring, state="disabled")
-        self.stop_button.pack(side="left", padx=5)
-
-        info_label = ttk.Label(control_frame,
-            text="Note: Configure paths and interface directly in listener.py",
-            font=("TkDefaultFont", 9, "italic"))
-        info_label.pack(side="right")
-
-        # --- Log output section ---
-        log_label = ttk.Label(main_frame, text="Live Output Log", font=("TkDefaultFont", 10, "bold"))
-        log_label.pack(side="top", anchor="w")
-
-        self.log_widget = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, state="disabled", bg="#f0f0f0", relief="solid", borderwidth=1)
-        self.log_widget.pack(fill="both", expand=True)
-
-    def update_log_widget(self):
-        """Checks the queue for new log messages and updates the text widget."""
+    def periodic_log_check(self):
+        """Safely updates the GUI text widget from the log queue."""
         while not self.log_queue.empty():
-            try:
-                message = self.log_queue.get_nowait()
-                self.log_widget.config(state="normal")
-                self.log_widget.insert(tk.END, message)
-                self.log_widget.see(tk.END)  # Auto-scroll to the end
-                self.log_widget.config(state="disabled")
-            except queue.Empty:
-                pass
-        # Reschedule itself to run again after 100ms
-        self.after(100, self.update_log_widget)
+            line = self.log_queue.get_nowait()
+            self.log_text.insert(tk.END, line)
+            self.log_text.see(tk.END)
+        self.after(100, self.periodic_log_check)
 
     def start_monitoring(self):
-        """Starts the listener.py script in a separate thread."""
-        if not os.path.exists(LISTENER_SCRIPT_PATH):
-            messagebox.showerror("Error", f"Listener script not found: {LISTENER_SCRIPT_PATH}")
+        """Starts the listener.py subprocess and the log tailing thread."""
+        if not os.path.exists(LISTENER_SCRIPT_NAME):
+            messagebox.showerror("Error", f"Could not find '{LISTENER_SCRIPT_NAME}'")
             return
 
-        self.log_widget.config(state="normal")
-        self.log_widget.delete(1.0, tk.END)
-        self.log_widget.insert(tk.END, "🚀 Starting monitoring process...\n")
-        self.log_widget.insert(tk.END, "🔑 You may be prompted for your 'sudo' password in the terminal.\n\n")
-        self.log_widget.config(state="disabled")
+        # Clean up the old log file to ensure a fresh start
+        if os.path.exists(LOG_FILE_TO_MONITOR):
+            try:
+                os.remove(LOG_FILE_TO_MONITOR)
+            except OSError as e:
+                messagebox.showerror("File Error", f"Could not remove old log file:\n{e}\n\nPlease remove it manually:\nsudo rm {LOG_FILE_TO_MONITOR}")
+                return
 
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
+        self.log_text.delete('1.0', tk.END)
+        self.stop_event.clear()
 
-        # Run the subprocess handling in a separate thread to keep the GUI responsive
-        self.monitor_thread = threading.Thread(target=self._run_subprocess, daemon=True)
+        # Start both the subprocess and the log tailer in a single management thread
+        self.monitor_thread = threading.Thread(target=self._run_and_tail, daemon=True)
         self.monitor_thread.start()
 
-        # Start the periodic check for new log messages from the thread
-        self.update_log_widget()
-
-    def _run_subprocess(self):
-        """Executes the listener script and pipes its output to the log queue."""
+    def _run_and_tail(self):
+        """Runs the listener.py subprocess and starts tailing its log file."""
         try:
-            command = ['sudo', 'python3', LISTENER_SCRIPT_PATH]
-            # Use preexec_fn=os.setsid to create a new process group.
-            # This allows sending a signal to the entire group (sudo + python).
-            self.process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # Redirect stderr to stdout to capture all output
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                bufsize=1,  # Line-buffered
-                preexec_fn=os.setsid
-            )
-
-            # Read output line by line in real-time
-            for line in iter(self.process.stdout.readline, ''):
-                self.log_queue.put(line)
-
-            self.process.stdout.close()
-            return_code = self.process.wait()
-            self.log_queue.put(f"\n--- ✅ Process finished with exit code {return_code} ---\n")
-
-        except FileNotFoundError:
-            self.log_queue.put("Error: 'sudo' or 'python3' not found. Ensure they are in your system's PATH.\n")
+            # Launch the listener.py script
+            python_executable = sys.executable
+            command = [python_executable, '-u',  LISTENER_SCRIPT_NAME]
+            self.process = subprocess.Popen(command)
+            self.log_queue.put(f"🚀 Started '{LISTENER_SCRIPT_NAME}' (PID: {self.process.pid}).\n")
+            
+            # Start tailing the log file
+            self._tail_log_file()
+            
+            # Wait for the process to end
+            self.process.wait()
+            
         except Exception as e:
-            self.log_queue.put(f"An unexpected error occurred: {e}\n")
+            self.log_queue.put(f"💥 Error launching subprocess: {e}\n")
         finally:
-            # Schedule the GUI state reset on the main thread
-            self.after(0, self.on_process_finished)
+            self.log_queue.put("\n--- ✅ Backend process finished. ---\n")
+            self.after(0, self.on_monitoring_stopped) # Schedule GUI update on main thread
+
+    def _tail_log_file(self):
+        """Opens the log file and watches for new lines."""
+        self.log_queue.put("Waiting for log file to be created...\n")
+        while not os.path.exists(LOG_FILE_TO_MONITOR):
+            if self.stop_event.is_set(): return
+            time.sleep(0.5)
+
+        self.log_queue.put(f"Tailing log file: {LOG_FILE_TO_MONITOR}\n\n")
+        try:
+            with open(LOG_FILE_TO_MONITOR, 'r', encoding='utf-8', errors='replace') as f:
+                f.seek(0, 2)
+                while not self.stop_event.is_set():
+                    line = f.readline()
+                    if line:
+                        self.log_queue.put(line)
+                    else:
+                        time.sleep(0.1)
+        except Exception as e:
+            self.log_queue.put(f"Error tailing log file: {e}\n")
 
     def stop_monitoring(self):
-        """Stops the running subprocess by sending a SIGINT signal."""
-        if self.process and self.process.poll() is None:  # Check if process is running
-            self.log_queue.put("\n--- 🛑 Sending stop signal (SIGINT)... ---\n")
+        """Sends a stop signal to the listener.py process."""
+        self.stop_button.config(state="disabled")
+        self.stop_event.set()
+        
+        if self.process and self.process.poll() is None:
+            self.log_queue.put("\n--- 🛑 Sending stop signal (Ctrl+C) to backend... ---\n")
             try:
-                # Send SIGINT to the entire process group
-                os.killpg(os.getpgid(self.process.pid), signal.SIGINT)
-            except ProcessLookupError:
-                self.log_queue.put("--- Process already terminated. ---\n")
-            except Exception as e:
-                self.log_queue.put(f"--- Error sending signal: {e} ---\n")
+                os.kill(self.process.pid, signal.SIGINT)
+            except (ProcessLookupError, PermissionError) as e:
+                self.log_queue.put(f"--- Could not send signal: {e} ---\n")
         else:
-            self.log_queue.put("--- Process is not running. ---\n")
+            self.on_monitoring_stopped()
 
-        self.stop_button.config(state="disabled")
-
-    def on_process_finished(self):
-        """Callback to reset the GUI state after the process has terminated."""
+    def on_monitoring_stopped(self):
+        """Resets the GUI state."""
         self.start_button.config(state="normal")
-        self.stop_button.config(state="disabled")
-        self.process = None
+        self.stop_event.set()
 
     def on_closing(self):
-        """Handles the window close ('X') button event."""
-        if self.process and self.process.poll() is None:
-            if messagebox.askokcancel("Quit", "The monitoring process is running. Stop it and exit?"):
-                self.stop_monitoring()
-                # Give the process a moment to shut down before destroying the window
-                self.after(500, self.destroy)
-            else:
-                return  # Do not close the window if user cancels
+        """Handles the window close event."""
+        self.stop_monitoring()
         self.destroy()
 
 if __name__ == "__main__":
-    app = SshDecryptorGui()
+    app = SimpleLogViewer()
     app.mainloop()
